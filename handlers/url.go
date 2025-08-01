@@ -7,6 +7,7 @@ import (
 	"sortlynk/database"
 	"sortlynk/models"
 	"sortlynk/utils"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -29,36 +30,44 @@ func ShortenURL(c *gin.Context) {
 		return
 	}
 
-	var shortCode string
 	var urlRecord models.URL
-	for {
-		shortCode = utils.GenerateShortUrl(urlRecord.OriginalURL)
-		if err := database.DB.Where("short_code = ?", shortCode).First(&urlRecord).Error; err != nil {
-			break // Short code is unique
+	var err error
+	for i := 0; i < 5; i++ {
+		shortCode := utils.GenerateShortUrl(req.URL)
+		urlRecord = models.URL{
+			ShortCode:   shortCode,
+			OriginalURL: req.URL,
 		}
-	}
 
-	urlRecord = models.URL{
-		ShortCode:   shortCode,
-		OriginalURL: req.URL,
-	}
+		if userID, exists := c.Get("user_id"); exists {
+			userIDUint := userID.(uint)
+			urlRecord.UserID = &userIDUint
+		}
 
-	if userID, exists := c.Get("user_id"); exists {
-		userIDUint := userID.(uint)
-		urlRecord.UserID = &userIDUint
-	}
+		err = database.DB.Create(&urlRecord).Error
+		if err == nil {
+			break // Success
+		}
 
-	if err := database.DB.Create(&urlRecord).Error; err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			continue // Collision, try again
+		}
+
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create short URL"})
 		return
 	}
 
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create short URL after multiple attempts"})
+		return
+	}
+
 	ctx := context.Background()
-	database.Redis.Set(ctx, shortCode, req.URL, 24*time.Hour)
+	database.Redis.Set(ctx, urlRecord.ShortCode, req.URL, 24*time.Hour)
 
 	c.JSON(http.StatusCreated, gin.H{
-		"short_code":   shortCode,
-		"short_url":    "http://localhost:8080/" + shortCode,
+		"short_code":   urlRecord.ShortCode,
+		"short_url":    "http://localhost:8080/" + urlRecord.ShortCode,
 		"original_url": req.URL,
 	})
 }
