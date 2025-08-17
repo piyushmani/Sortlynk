@@ -1,6 +1,6 @@
 module sortlynk
 
-go 1.24.5
+go 1.24.4
 
 require (
 	github.com/gin-gonic/gin v1.9.1
